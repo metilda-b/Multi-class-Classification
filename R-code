@@ -1,0 +1,111 @@
+library("e1071")
+library("rpart")
+library("caret")
+library("ggplot2")
+library("randomForest")
+
+pump <- read.csv('C:\\Users\\Metilda\\Desktop\\PUMP\\Training.csv',header = TRUE, sep = ',')
+pump_test <- read.csv('C:\\Users\\Metilda\\Desktop\\PUMP\\Test.csv',header = TRUE, sep = ',')
+
+
+pump_train<-subset(pump,select = -c(funder,subvillage,date_recorded,quantity_group,recorded_by,extraction_type,
+                                    scheme_name,ward,extraction_type_group,lga,wpt_name,installer,waterpoint_type,
+                                    water_quality,region_code,district_code))
+
+pump_train$age <- with(pump_train, 2018 - construction_year)
+pump_train$age <- ifelse(pump_train$age>=500, 500, pump_train$age)
+pump_train<-subset(pump_train,select = -c(construction_year))
+
+
+## 70% of the sample size
+smp_size <- floor(0.70 * nrow(pump_train))
+
+## set the seed to make your partition reproductible
+set.seed(972)
+train_ind <- sample(seq_len(nrow(pump_train)), size = smp_size)
+
+train <- pump_train[train_ind, ]
+valid <- pump_train[-train_ind, ]
+
+
+pump_test<-subset(pump_test,select = -c(funder,subvillage,date_recorded,quantity_group,recorded_by,extraction_type,
+                                        scheme_name,ward,extraction_type_group,lga,wpt_name,installer,waterpoint_type,
+                                        water_quality,region_code,district_code))
+
+pump_test$age <- with(pump_test, 2018 - construction_year)
+pump_test$age <- ifelse(pump_test$age>=500, 500, pump_test$age)
+summary(pump_test$age)
+pump_test<-subset(pump_test,select = -c(construction_year))
+
+library("tidyverse")
+library("dplyr")
+
+train %>% mutate_if(is.numeric, funs(ifelse(is.na(.), 0, .)))
+
+lapply(train, function(x) any(is.na(x)))
+
+
+set.seed(42)
+rf_model <- randomForest(status_group ~., data = train, importance = TRUE, ntree = 100, nodesize = 2)
+
+importance(rf_model,type=1)
+varImpPlot(rf_model)
+
+
+
+set.seed(42)
+rf_model2 <- randomForest(status_group ~ gps_height+longitude+latitude+basin+region+quantity+population+extraction_type_class
+                          +age+waterpoint_type_group+source+scheme_management, 
+                          data = train, importance = TRUE, ntree = 200, nodesize = 3)
+
+conf <- rf_model2$confusion
+
+conf
+accuracy <- sum(diag(conf))/sum(conf)
+accuracy
+
+predict1 <- predict(rf_model2, valid)
+
+conf_mat <- table(pred=predict1, actual=valid$status_group)
+print(confusionMatrix(conf_mat))
+accuracy_valid <- sum(diag(conf_mat))/sum(conf_mat)
+conf_mat
+accuracy_valid
+
+# Predict Values
+predict_test <- predict(rf_model2, pump_test)
+str(predict_test)
+# Create submission data frame
+submission <- data.frame(pump_test$id)
+submission$status_group <- predict_test
+names(submission)[1] <- "id"
+
+# submission csv
+write.table(submission, file = "C:\\Users\\Metilda\\Desktop\\PUMP\\Submission2.csv", sep = ',')
+
+
+library("MASS")
+#LDA
+lda_model <- lda(status_group ~ gps_height+longitude+latitude+basin+region+quantity+population+management+quality_group
+                   +extraction_type_class+age+waterpoint_type_group+source+scheme_management, 
+                 data = train, prior = c(0.55,0.07,0.38))
+
+valid$predict2 = predict(lda_model, valid)$class
+conf_lda<-table(actual=valid$status_group, predicted=valid$predict2)
+
+accuracy_valid2 <- sum(diag(conf_lda))/sum(conf_lda)
+conf_lda
+accuracy_valid2
+
+
+# Predict Values
+predict_test2 <- predict(lda_model, pump_test)
+str(predict_test2)
+# Create submission data frame
+submission3 <- data.frame(pump_test$id)
+submission3$status_group <- predict_test2$class
+names(submission3)[1] <- "id"
+
+# submission csv
+write.table(submission3, file = "C:\\Users\\Metilda\\Desktop\\PUMP\\Submission_lda.csv", sep = ',')
+
